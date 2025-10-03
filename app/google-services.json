@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "434073549007",
+    "project_id": "sanjeevani-9a63a",
+    "storage_bucket": "sanjeevani-9a63a.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:434073549007:android:a8a5bdc16ffc28eeaddfba",
+        "android_client_info": {
+          "package_name": "com.anand.ctbuildfest"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAez9_0WA2g_tT-9-QnpxnV2MpCuvPk5fQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
