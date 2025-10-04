@@ -1,5 +1,5 @@
 Sanjeevani - Disaster Management App
->Team Nam & Team ID
+>Team Name & Team ID
 Team Name: INNOBLOSSOMS
 Team ID: T-019
 Theme- Open Innovation
