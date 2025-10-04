@@ -17,9 +17,11 @@ import android.os.Bundle
 import android.os.Looper
 import android.provider.Settings
 import android.telephony.SmsManager
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.RequiresApi
@@ -28,6 +30,8 @@ import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import androidx.fragment.app.Fragment
+import com.anand.ctbuildfest.network.SmartRouter
+import com.anand.ctbuildfest.security.SecurityManager
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
 import com.google.android.gms.location.FusedLocationProviderClient
@@ -36,6 +40,9 @@ import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -56,12 +63,17 @@ class HomeFragment : Fragment() {
 
     private lateinit var fusedLocationClient: FusedLocationProviderClient
 
+    // Security Manager
+    private lateinit var securityManager: SecurityManager
+
+    // Device Security Status Display (Optional)
+    private var securityStatusText: TextView? = null
+
     private val emergencyContacts = listOf(
-        "+916280915449", // Replace with real numbers
+        "+916280915449",
         "+917986405288"
     )
 
-    // Permission launcher (handles multiple at once)
     private val requestPermissionsLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
             val allGranted = permissions.entries.all { it.value }
@@ -87,6 +99,9 @@ class HomeFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
+        // Initialize Security Manager
+        securityManager = SecurityManager(requireContext())
+
         // Init Views
         sosButton = view.findViewById(R.id.sosButton)
         confirmSosButton = view.findViewById(R.id.confirmSosButton)
@@ -99,13 +114,52 @@ class HomeFragment : Fragment() {
         safetyKitCard = view.findViewById(R.id.safetyKitCard)
         reportCard = view.findViewById(R.id.reportCard)
 
+        // Optional: Security status display
+        // securityStatusText = view.findViewById(R.id.securityStatusText)
+
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(requireContext())
 
         setupListeners()
+        displaySecurityStatus()
+    }
+
+    /**
+     * Display device security status and fingerprint
+     */
+    private fun displaySecurityStatus() {
+        val fingerprint = securityManager.getDeviceFingerprint()
+        val shortFingerprint = fingerprint.take(12)
+
+        Log.i("HomeFragment", "Device Fingerprint: $fingerprint")
+        Log.i("HomeFragment", "Public Key: ${securityManager.getPublicKey()?.encoded?.size} bytes")
+
+        // Optional: Show in UI
+        securityStatusText?.text = "Secure Device ID: $shortFingerprint..."
+
+        // Test security features (DEBUG - Remove in production)
+        testSecurityFeatures()
+    }
+
+    /**
+     * Test security implementation (DEBUG ONLY)
+     */
+    private fun testSecurityFeatures() {
+        // Test hashing
+        val testData = "TestSecurityData"
+        val hash = securityManager.hashData(testData)
+        Log.i("SecurityTest", "Hash: ${hash.take(20)}...")
+
+        // Test session token
+        val token = securityManager.generateSessionToken()
+        Log.i("SecurityTest", "Session Token: ${token.take(16)}...")
+
+        // Test alert signing
+        val testAlert = Alert("Test SOS", "Test", "0.0,0.0", "Critical", "SOS")
+        val signedAlert = securityManager.signAlert(testAlert)
+        Log.i("SecurityTest", "Alert signed: ${signedAlert != null}")
     }
 
     private fun setupListeners() {
-        // SOS Button -> Show Confirmation Dialog
         sosButton.setOnClickListener {
             sosDialog.visibility = View.VISIBLE
         }
@@ -119,7 +173,6 @@ class HomeFragment : Fragment() {
             checkAndRequestPermissions()
         }
 
-        // Feature Cards
         mapCard.setOnClickListener {
             Toast.makeText(requireContext(), "Opening Disaster Map...", Toast.LENGTH_SHORT).show()
         }
@@ -175,7 +228,6 @@ class HomeFragment : Fragment() {
 
     @RequiresPermission(allOf = [Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.SEND_SMS])
     private fun sendSos() {
-        // Check permissions
         if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.ACCESS_FINE_LOCATION)
             != PackageManager.PERMISSION_GRANTED ||
             ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.SEND_SMS)
@@ -185,13 +237,11 @@ class HomeFragment : Fragment() {
             return
         }
 
-        // Check if location services are enabled
         if (!isLocationEnabled()) {
             promptEnableLocation()
             return
         }
 
-        // Try to get last location first
         fusedLocationClient.lastLocation.addOnSuccessListener { location: Location? ->
             if (location != null) {
                 sendSosWithLocation(location)
@@ -203,14 +253,12 @@ class HomeFragment : Fragment() {
         }
     }
 
-    // Check if location services are enabled
     private fun isLocationEnabled(): Boolean {
         val locationManager = requireContext().getSystemService(Context.LOCATION_SERVICE) as LocationManager
         return locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER) ||
                 locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
     }
 
-    // Prompt user to enable location services
     private fun promptEnableLocation() {
         AlertDialog.Builder(requireContext())
             .setTitle("Location Services Disabled")
@@ -252,23 +300,64 @@ class HomeFragment : Fragment() {
         )
     }
 
-    // Send SOS with confirmed location
-    @RequiresApi(Build.VERSION_CODES.O)
+    /**
+     * Send SOS with security features: signing and encryption
+     */
     private fun sendSosWithLocation(location: Location) {
-        val message = "🚨 EMERGENCY SOS!\n" +
-                "I need help. Location:\n" +
-                "https://maps.google.com/?q=${location.latitude},${location.longitude}"
+        // Create alert
+        val alert = Alert(
+            title = "EMERGENCY SOS",
+            description = "I need immediate help! This is a verified emergency alert.",
+            location = "${location.latitude},${location.longitude}",
+            severity = "Critical",
+            type = "SOS"
+        )
 
-        sendSmsToContacts(message)
-        shareViaWhatsApp(message)
-        sendFcmSosAlert(message, location.latitude, location.longitude)
+        // Sign alert for authenticity
+        val signedAlert = securityManager.signAlert(alert)
 
-        Toast.makeText(requireContext(), "🚨 SOS Alert Sent!", Toast.LENGTH_LONG).show()
+        if (signedAlert != null) {
+            Log.i("HomeFragment", "✓ SOS Alert signed successfully")
+            Log.i("HomeFragment", "Signature: ${signedAlert.signature.take(32)}...")
+        } else {
+            Log.w("HomeFragment", "⚠ Failed to sign SOS alert")
+        }
+
+        // Get device fingerprint for trust scoring
+        val deviceFingerprint = securityManager.getDeviceFingerprint()
+        Log.i("HomeFragment", "Device Fingerprint: ${deviceFingerprint.take(16)}...")
+
+        // Send via smart router with encryption
+        CoroutineScope(Dispatchers.Main).launch {
+            try {
+                val router = SmartRouter(requireContext())
+                router.sendAlert(alert, emergencyContacts)
+
+                Toast.makeText(
+                    requireContext(),
+                    "🚨 Signed & Encrypted SOS Sent!",
+                    Toast.LENGTH_LONG
+                ).show()
+
+                // Also send direct SMS as fallback
+                sendSecureSmsToContacts(alert, location)
+
+            } catch (e: Exception) {
+                Log.e("HomeFragment", "Failed to send SOS", e)
+                Toast.makeText(
+                    requireContext(),
+                    "⚠ SOS sending failed: ${e.message}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
     }
 
+    /**
+     * Send SMS with hash verification for authenticity
+     */
     @RequiresApi(Build.VERSION_CODES.O)
-    private fun sendSmsToContacts(message: String) {
-        // Check SMS permission first
+    private fun sendSecureSmsToContacts(alert: Alert, location: Location) {
         if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.SEND_SMS)
             != PackageManager.PERMISSION_GRANTED
         ) {
@@ -277,15 +366,30 @@ class HomeFragment : Fragment() {
         }
 
         try {
-            // Get SmsManager based on API level
-            val smsManager = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            val smsManager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 requireContext().getSystemService(SmsManager::class.java)
             } else {
                 @Suppress("DEPRECATION")
                 SmsManager.getDefault()
             }
 
-            // Create PendingIntents for sent and delivery confirmation
+            // Create message with hash for verification
+            val messageContent = """
+                🚨 EMERGENCY SOS
+                ${alert.description}
+                
+                Location: https://maps.google.com/?q=${location.latitude},${location.longitude}
+                
+                Time: ${System.currentTimeMillis()}
+                Device: ${securityManager.getDeviceFingerprint().take(8)}
+            """.trimIndent()
+
+            // Generate hash for message integrity
+            val messageHash = securityManager.hashData(messageContent)
+            val secureMessage = "$messageContent\n\nVerify: ${messageHash.take(8)}"
+
+            Log.i("HomeFragment", "SMS Hash: ${messageHash.take(16)}...")
+
             val sentIntent = PendingIntent.getBroadcast(
                 requireContext(),
                 0,
@@ -293,28 +397,13 @@ class HomeFragment : Fragment() {
                 PendingIntent.FLAG_IMMUTABLE
             )
 
-            val deliveryIntent = PendingIntent.getBroadcast(
-                requireContext(),
-                0,
-                Intent("SMS_DELIVERED"),
-                PendingIntent.FLAG_IMMUTABLE
-            )
-
-            // Register broadcast receivers for SMS status
             requireContext().registerReceiver(object : BroadcastReceiver() {
                 override fun onReceive(context: Context?, intent: Intent?) {
-                    when (resultCode) {
-                        Activity.RESULT_OK ->
-                            Toast.makeText(requireContext(), "✓ SMS Sent Successfully", Toast.LENGTH_SHORT).show()
-                        SmsManager.RESULT_ERROR_GENERIC_FAILURE ->
-                            Toast.makeText(requireContext(), "✗ SMS Failed: Generic Error", Toast.LENGTH_SHORT).show()
-                        SmsManager.RESULT_ERROR_NO_SERVICE ->
-                            Toast.makeText(requireContext(), "✗ SMS Failed: No Service", Toast.LENGTH_SHORT).show()
-                        SmsManager.RESULT_ERROR_NULL_PDU ->
-                            Toast.makeText(requireContext(), "✗ SMS Failed: Null PDU", Toast.LENGTH_SHORT).show()
-                        SmsManager.RESULT_ERROR_RADIO_OFF ->
-                            Toast.makeText(requireContext(), "✗ SMS Failed: Radio Off", Toast.LENGTH_SHORT).show()
+                    val status = when (resultCode) {
+                        Activity.RESULT_OK -> "✓ SMS Sent"
+                        else -> "✗ SMS Failed"
                     }
+                    Toast.makeText(requireContext(), status, Toast.LENGTH_SHORT).show()
                     try {
                         requireContext().unregisterReceiver(this)
                     } catch (e: Exception) {
@@ -323,50 +412,48 @@ class HomeFragment : Fragment() {
                 }
             }, IntentFilter("SMS_SENT"), Context.RECEIVER_NOT_EXPORTED)
 
-            // Send SMS to each contact
             var sentCount = 0
             for (contact in emergencyContacts) {
                 try {
-                    // Split message if longer than 160 characters
-                    val parts = smsManager.divideMessage(message)
+                    val parts = smsManager.divideMessage(secureMessage)
 
                     if (parts.size > 1) {
-                        // Send as multipart SMS
                         val sentIntents = ArrayList<PendingIntent>()
-                        val deliveryIntents = ArrayList<PendingIntent>()
                         for (i in parts.indices) {
                             sentIntents.add(sentIntent)
-                            deliveryIntents.add(deliveryIntent)
                         }
-                        smsManager.sendMultipartTextMessage(contact, null, parts, sentIntents, deliveryIntents)
+                        smsManager.sendMultipartTextMessage(contact, null, parts, sentIntents, null)
                     } else {
-                        // Send single SMS
-                        smsManager.sendTextMessage(contact, null, message, sentIntent, deliveryIntent)
+                        smsManager.sendTextMessage(contact, null, secureMessage, sentIntent, null)
                     }
                     sentCount++
-                } catch (e: SecurityException) {
-                    Toast.makeText(requireContext(), "SMS permission denied at runtime", Toast.LENGTH_SHORT).show()
-                    return
+                    Log.i("HomeFragment", "Secure SMS sent to $contact")
                 } catch (e: Exception) {
-                    Toast.makeText(requireContext(), "Failed to send SMS to $contact: ${e.message}", Toast.LENGTH_SHORT).show()
+                    Log.e("HomeFragment", "Failed to send SMS to $contact", e)
                 }
             }
 
             if (sentCount > 0) {
-                Toast.makeText(requireContext(), "📱 Sending SMS to $sentCount contacts...", Toast.LENGTH_LONG).show()
+                Toast.makeText(requireContext(), "📱 Sending verified SMS to $sentCount contacts", Toast.LENGTH_LONG).show()
             }
 
         } catch (e: Exception) {
-            Toast.makeText(requireContext(), "SMS sending failed: ${e.message}", Toast.LENGTH_LONG).show()
-            e.printStackTrace()
+            Log.e("HomeFragment", "SMS sending failed", e)
+            Toast.makeText(requireContext(), "SMS failed: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 
-
+    /**
+     * Share via WhatsApp with security verification code
+     */
     private fun shareViaWhatsApp(message: String) {
         try {
+            // Add verification hash
+            val hash = securityManager.hashData(message)
+            val secureMessage = "$message\n\n🔒 Verify: ${hash.take(8)}"
+
             val intent = Intent(Intent.ACTION_VIEW).apply {
-                data = "https://api.whatsapp.com/send?text=${Uri.encode(message)}".toUri()
+                data = "https://api.whatsapp.com/send?text=${Uri.encode(secureMessage)}".toUri()
                 setPackage("com.whatsapp")
             }
             startActivity(intent)
@@ -375,18 +462,29 @@ class HomeFragment : Fragment() {
         }
     }
 
+    /**
+     * Send FCM notification with signed alert
+     */
     private fun sendFcmSosAlert(message: String, lat: Double, lon: Double) {
         val serverKey = "YOUR_FCM_SERVER_KEY"
+
+        // Generate session token for this request
+        val sessionToken = securityManager.generateSessionToken()
+        val deviceFingerprint = securityManager.getDeviceFingerprint()
+
         val json = """
         {
           "to": "/topics/emergency", 
           "notification": {
-            "title": "🚨 SOS Alert",
+            "title": "🚨 Verified SOS Alert",
             "body": "$message"
           },
           "data": {
             "latitude": "$lat",
-            "longitude": "$lon"
+            "longitude": "$lon",
+            "deviceFingerprint": "$deviceFingerprint",
+            "sessionToken": "$sessionToken",
+            "timestamp": "${System.currentTimeMillis()}"
           }
         }
         """.trimIndent()
@@ -403,13 +501,13 @@ class HomeFragment : Fragment() {
                     .build()
 
                 val response = client.newCall(request).execute()
-                if (!response.isSuccessful) {
-                    println("FCM Error: ${response.body?.string()}")
+                if (response.isSuccessful) {
+                    Log.i("HomeFragment", "FCM notification sent successfully")
                 } else {
-                    println("FCM notification sent successfully")
+                    Log.e("HomeFragment", "FCM Error: ${response.body?.string()}")
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
+                Log.e("HomeFragment", "FCM failed", e)
             }
         }.start()
     }

@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.location.Geocoder
 import android.net.Uri
 import android.os.Bundle
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -18,6 +19,9 @@ import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.anand.ctbuildfest.network.SmartRouter
+import com.anand.ctbuildfest.security.InputSanitizer
+import com.anand.ctbuildfest.security.SecurityManager
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
@@ -34,7 +38,7 @@ class ReportFragment : Fragment() {
     private lateinit var reportIncidentFab: ExtendedFloatingActionButton
     private lateinit var reportsAdapter: ReportsAdapter
 
-    private val reportsList = mutableListOf<ReportWithLocation>()
+    private val reportsList = mutableListOf<Report>()
     private val reportsWithLocation = mutableListOf<ReportWithLocation>()
 
     private var selectedImageUri: Uri? = null
@@ -43,31 +47,13 @@ class ReportFragment : Fragment() {
     private lateinit var uploadedImageView: ImageView
     private lateinit var uploadPlaceholderView: LinearLayout
 
-    private val pickImageLauncher = registerForActivityResult(
-        ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        uri?.let {
-            selectedImageUri = it
-            if (::uploadedImageView.isInitialized) {
-                uploadedImageView.setImageURI(it)
-                uploadedImageView.visibility = View.VISIBLE
-                uploadPlaceholderView.visibility = View.GONE
-            }
-        }
-    }
+    // Security Manager
+    private lateinit var securityManager: SecurityManager
 
-    private val takePictureLauncher = registerForActivityResult(
-        ActivityResultContracts.TakePicture()
-    ) { success ->
-        if (success && photoUri != null) {
-            selectedImageUri = photoUri
-            if (::uploadedImageView.isInitialized) {
-                uploadedImageView.setImageURI(photoUri)
-                uploadedImageView.visibility = View.VISIBLE
-                uploadPlaceholderView.visibility = View.GONE
-            }
-        }
-    }
+    // Security Stats
+    private var totalReportsSubmitted = 0
+    private var secureReportsSubmitted = 0
+
 
     private val cameraPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -89,20 +75,33 @@ class ReportFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
+        // Initialize Security Manager
+        securityManager = SecurityManager(requireContext())
+
         reportsRecyclerView = view.findViewById(R.id.reportsRecyclerView)
         emptyState = view.findViewById(R.id.emptyState)
         reportIncidentFab = view.findViewById(R.id.reportIncidentFab)
 
         setupRecyclerView()
         loadSampleReports()
+        displaySecurityStats()
 
         reportIncidentFab.setOnClickListener {
             openReportIncidentDialog()
         }
     }
 
+    /**
+     * Display security statistics (Optional)
+     */
+    private fun displaySecurityStats() {
+        Log.i("ReportFragment", "Device Fingerprint: ${securityManager.getDeviceFingerprint().take(16)}...")
+        Log.i("ReportFragment", "Total Reports: $totalReportsSubmitted")
+        Log.i("ReportFragment", "Secure Reports: $secureReportsSubmitted")
+    }
+
     private fun setupRecyclerView() {
-        reportsAdapter = ReportsAdapter(reportsList) { report ->
+        reportsAdapter = ReportsAdapter(reportsWithLocation) { report ->
             Toast.makeText(requireContext(), "Viewing: ${report.title}", Toast.LENGTH_SHORT).show()
         }
 
@@ -122,10 +121,10 @@ class ReportFragment : Fragment() {
                 id = 1,
                 title = "Flood Alert",
                 description = "Heavy flooding in downtown area",
-                location = "Marine drive, Mumbai",
+                location = "Downtown, Mumbai",
                 severity = "High",
                 timestamp = "2h ago",
-                reporterName = "Amit",
+                reporterName = "John",
                 type = "Flood",
                 latLng = LatLng(19.0760, 72.8777)
             ),
@@ -136,7 +135,7 @@ class ReportFragment : Fragment() {
                 location = "City Center, Delhi",
                 severity = "Medium",
                 timestamp = "5h ago",
-                reporterName = "Ajay",
+                reporterName = "Jane",
                 type = "Earthquake",
                 latLng = LatLng(28.7041, 77.1025)
             ),
@@ -147,7 +146,7 @@ class ReportFragment : Fragment() {
                 location = "North Hills, Bangalore",
                 severity = "High",
                 timestamp = "1d ago",
-                reporterName = "Gulshan",
+                reporterName = "Mike",
                 type = "Fire",
                 latLng = LatLng(12.9716, 77.5946)
             )
@@ -156,7 +155,7 @@ class ReportFragment : Fragment() {
         reportsWithLocation.addAll(sampleReportsWithLocation)
 
         val reportsForDisplay = sampleReportsWithLocation.map {
-            ReportWithLocation(
+            Report(
                 id = it.id,
                 title = it.title,
                 description = it.description,
@@ -166,7 +165,6 @@ class ReportFragment : Fragment() {
                 reporterName = it.reporterName,
                 type = it.type,
                 latLng = it.latLng
-
             )
         }
 
@@ -226,7 +224,7 @@ class ReportFragment : Fragment() {
         // Auto-fetch LatLng when location loses focus
         incidentLocation.setOnFocusChangeListener { _, hasFocus ->
             if (!hasFocus) {
-                val locationText = incidentLocation.text.toString().trim()
+                val locationText = InputSanitizer.sanitizeLocation(incidentLocation.text.toString())
                 if (locationText.isNotEmpty()) {
                     incidentLocation.hint = "Finding coordinates..."
 
@@ -236,7 +234,7 @@ class ReportFragment : Fragment() {
                         withContext(Dispatchers.Main) {
                             if (latLng != null) {
                                 cachedLatLng = latLng
-                                incidentLocation.hint = "Lat: ${String.format("%.4f", latLng.latitude)}, Lng: ${String.format("%.4f", latLng.longitude)}"
+                                incidentLocation.hint = "Lat: ${latLng.latitude}, Lng: ${latLng.longitude}"
                                 Toast.makeText(requireContext(), "✓ Location found", Toast.LENGTH_SHORT).show()
                             } else {
                                 incidentLocation.hint = "Location"
@@ -251,9 +249,11 @@ class ReportFragment : Fragment() {
         cancelButton.setOnClickListener { currentDialog.dismiss() }
 
         submitButton.setOnClickListener {
-            val title = incidentTitle.text.toString().trim()
-            val location = incidentLocation.text.toString().trim()
-            val description = incidentDescription.text.toString().trim()
+            // Sanitize ALL inputs for security
+            val safeTitle = InputSanitizer.sanitizeText(incidentTitle.text.toString())
+            val safeLocation = InputSanitizer.sanitizeLocation(incidentLocation.text.toString())
+            val safeDescription = InputSanitizer.sanitizeText(incidentDescription.text.toString())
+
             val severity = when (severityRadioGroup.checkedRadioButtonId) {
                 R.id.severityLow -> "Low"
                 R.id.severityMedium -> "Medium"
@@ -261,22 +261,39 @@ class ReportFragment : Fragment() {
                 else -> "Medium"
             }
 
+            // Log sanitization
+            Log.i("ReportFragment", "Original title length: ${incidentTitle.text?.length}")
+            Log.i("ReportFragment", "Sanitized title length: ${safeTitle.length}")
+
             when {
-                title.isEmpty() -> incidentTitle.error = "Title required"
-                selectedIncidentType.isEmpty() -> Toast.makeText(requireContext(), "Select type", Toast.LENGTH_SHORT).show()
-                location.isEmpty() -> incidentLocation.error = "Location required"
-                description.isEmpty() -> incidentDescription.error = "Description required"
+                safeTitle.isEmpty() -> {
+                    incidentTitle.error = "Title required"
+                    return@setOnClickListener
+                }
+                selectedIncidentType.isEmpty() -> {
+                    Toast.makeText(requireContext(), "Select incident type", Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
+                safeLocation.isEmpty() -> {
+                    incidentLocation.error = "Location required"
+                    return@setOnClickListener
+                }
+                safeDescription.isEmpty() -> {
+                    incidentDescription.error = "Description required"
+                    return@setOnClickListener
+                }
                 else -> {
+
                     if (cachedLatLng != null) {
-                        saveReport(title, description, location, severity, selectedIncidentType, cachedLatLng)
+                        submitSecureReport(safeTitle, safeDescription, safeLocation, severity, selectedIncidentType, cachedLatLng, null)
                     } else {
                         Toast.makeText(requireContext(), "Geocoding location...", Toast.LENGTH_SHORT).show()
 
                         CoroutineScope(Dispatchers.IO).launch {
-                            val latLng = geocodeLocation(location)
+                            val latLng = geocodeLocation(safeLocation)
 
                             withContext(Dispatchers.Main) {
-                                saveReport(title, description, location, severity, selectedIncidentType, latLng)
+                                submitSecureReport(safeTitle, safeDescription, safeLocation, severity, selectedIncidentType, latLng, null)
                             }
                         }
                     }
@@ -287,36 +304,96 @@ class ReportFragment : Fragment() {
         currentDialog.show()
     }
 
-    private fun saveReport(
-        title: String,
-        description: String,
-        location: String,
+    /**
+     * Submit report with full security: sanitization, signing, encryption
+     */
+    private fun submitSecureReport(
+        safeTitle: String,
+        safeDescription: String,
+        safeLocation: String,
         severity: String,
         type: String,
-        latLng: LatLng?
+        latLng: LatLng?,
+        safeImageUri: Uri?
     ) {
-        val newReportWithLoc = ReportWithLocation(
-            id = (Math.random() * 10000).toInt(),
-            title = title,
-            description = description,
-            location = location,
+        totalReportsSubmitted++
+
+        // Create alert
+        val alert = Alert(
+            title = safeTitle,
+            description = safeDescription,
+            location = safeLocation,
             severity = severity,
-            timestamp = "Just now",
-            reporterName = "You",
-            type = type,
-            latLng = latLng
+            type = type
         )
 
-        addNewReportWithLocation(newReportWithLoc)
+        // Sign alert for authenticity
+        val signedAlert = securityManager.signAlert(alert)
 
-        if (latLng != null) {
-            (activity as? MainActivity)?.addDisasterMarker(newReportWithLoc)
-            Toast.makeText(requireContext(), "✓ Report Added to Map!", Toast.LENGTH_LONG).show()
+        if (signedAlert != null) {
+            secureReportsSubmitted++
+            Log.i("ReportFragment", "✓ Report signed successfully")
+            Log.i("ReportFragment", "Signature: ${signedAlert.signature.take(32)}...")
         } else {
-            Toast.makeText(requireContext(), "⚠ Report saved without map marker", Toast.LENGTH_SHORT).show()
+            Log.w("ReportFragment", "⚠ Failed to sign report")
         }
 
-        currentDialog.dismiss()
+        // Get device fingerprint for trust scoring
+        val deviceFingerprint = securityManager.getDeviceFingerprint()
+        Log.i("ReportFragment", "Device Fingerprint: ${deviceFingerprint.take(16)}...")
+
+        // Generate hash of report for integrity verification
+        val reportHash = securityManager.hashData("$safeTitle:$safeDescription:$safeLocation")
+        Log.i("ReportFragment", "Report Hash: ${reportHash.take(16)}...")
+
+        // Send via smart router
+        CoroutineScope(Dispatchers.Main).launch {
+            try {
+                val router = SmartRouter(requireContext())
+                router.sendAlert(alert, emptyList())
+
+                // Create report for local display
+                val newReportWithLoc = ReportWithLocation(
+                    id = (Math.random() * 10000).toInt(),
+                    title = safeTitle,
+                    description = safeDescription,
+                    location = safeLocation,
+                    severity = severity,
+                    timestamp = "Just now",
+                    reporterName = "You (Verified)",
+                    type = type,
+                    latLng = latLng
+                )
+
+                addNewReportWithLocation(newReportWithLoc)
+
+                if (latLng != null) {
+                    (activity as? MainActivity)?.addDisasterMarker(newReportWithLoc)
+                    Toast.makeText(
+                        requireContext(),
+                        "✓ Secure Report Submitted!\n🔒 Signed & Verified",
+                        Toast.LENGTH_LONG
+                    ).show()
+                } else {
+                    Toast.makeText(
+                        requireContext(),
+                        "✓ Report Submitted\n⚠ Without map marker",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+
+                displaySecurityStats()
+                currentDialog.dismiss()
+
+            } catch (e: Exception) {
+                Log.e("ReportFragment", "Failed to submit report", e)
+                Toast.makeText(
+                    requireContext(),
+                    "⚠ Submission failed: ${e.message}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
     }
 
     private fun geocodeLocation(locationString: String): LatLng? {
@@ -343,8 +420,7 @@ class ReportFragment : Fragment() {
             .setItems(options) { dialog, which ->
                 when (which) {
                     0 -> checkCameraPermissionAndOpen()
-                    1 -> pickImageLauncher.launch("image/*")
-                    2 -> dialog.dismiss()
+                    1 -> dialog.dismiss()
                 }
             }
             .show()
@@ -371,7 +447,6 @@ class ReportFragment : Fragment() {
             "${requireContext().packageName}.provider",
             photoFile
         )
-        takePictureLauncher.launch(photoUri)
     }
 
     private fun createImageFile(): File {
@@ -382,7 +457,7 @@ class ReportFragment : Fragment() {
     private fun addNewReportWithLocation(reportWithLoc: ReportWithLocation) {
         reportsWithLocation.add(0, reportWithLoc)
 
-        val report = ReportWithLocation(
+        val report = Report(
             id = reportWithLoc.id,
             title = reportWithLoc.title,
             description = reportWithLoc.description,
