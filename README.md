@@ -36,5 +36,13 @@ Cryptographic Libraries: AndroidX Security, CryptoHelper
 
 AI/ML (for anomaly detection & input validation): Future Roadmap
 
+Improvements made after First Evaluation Round <br>
+Added Security measures<br>
+End to End Encryption using AES Encryption <br>
+Mesh Network Control for Termination and triggering Mesh Nodes<br>
+Input Sanitization to reduce UGC attacks
+
+
+
 
 
