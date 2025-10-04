@@ -1,4 +1,4 @@
->Sanjeevani - Disaster Management App<br>
+Sanjeevani - Disaster Management App<br>
 Team Name & Team ID<br>
 Team Name: INNOBLOSSOMS
 Team ID: T-019
